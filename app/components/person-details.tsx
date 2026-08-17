@@ -2,7 +2,31 @@
 
 import { useMemo } from "react";
 import { relationsOf } from "@/lib/relations";
-import { fullName, lifespan, type FamilyTreeData, type Person } from "@/lib/types";
+import {
+  fullName,
+  lifespan,
+  type FamilyTreeData,
+  type Person,
+  type Union,
+} from "@/lib/types";
+
+/**
+ * How a declared relationship reads next to a name. Divorced partners stay in
+ * the partners list and are marked former, rather than being demoted to
+ * co-parents — the couple was real, it just ended.
+ */
+function partnerNote(union: Union): string {
+  switch (union.status) {
+    case "divorced":
+      return "former partner";
+    case "married":
+      return union.year ? `married ${union.year}` : "married";
+    case "partners":
+      return union.year ? `together since ${union.year}` : "";
+    default:
+      return "";
+  }
+}
 
 interface PersonDetailsProps {
   data: FamilyTreeData;
@@ -13,11 +37,13 @@ interface PersonDetailsProps {
 
 function RelationList({
   title,
+  hint,
   people,
   onSelect,
   suffixes,
 }: {
   title: string;
+  hint?: string;
   people: Person[];
   onSelect: (personId: string) => void;
   suffixes?: Record<string, string>;
@@ -29,6 +55,11 @@ function RelationList({
       <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
         {title}
       </h3>
+      {hint && (
+        <p className="text-xs leading-snug text-zinc-400 dark:text-zinc-500">
+          {hint}
+        </p>
+      )}
       <ul className="flex flex-col">
         {people.map((person) => (
           <li key={person.id}>
@@ -62,11 +93,7 @@ export default function PersonDetails({
   const partnerSuffixes = Object.fromEntries(
     relations.partners.map(({ person: partner, union }) => [
       partner.id,
-      union.status === "divorced"
-        ? "divorced"
-        : union.year
-          ? `m. ${union.year}`
-          : "",
+      partnerNote(union),
     ]),
   );
 
@@ -109,6 +136,12 @@ export default function PersonDetails({
         title={relations.partners.length > 1 ? "Partners" : "Partner"}
         people={relations.partners.map((p) => p.person)}
         suffixes={partnerSuffixes}
+        onSelect={onSelect}
+      />
+      <RelationList
+        title={relations.coParents.length > 1 ? "Co-parents" : "Co-parent"}
+        hint="Shares a child. No relationship recorded between them."
+        people={relations.coParents.map((p) => p.person)}
         onSelect={onSelect}
       />
       <RelationList

@@ -1,8 +1,26 @@
 import type { FamilyTreeData, Person, Union } from "./types";
+import { isDeclaredCouple } from "./types";
+
+/** Someone reached through a union, plus the union that connects them. */
+export interface RelatedThroughUnion {
+  person: Person;
+  union: Union;
+}
 
 export interface Relations {
   parents: Person[];
-  partners: { person: Person; union: Union }[];
+  /**
+   * People this person is recorded as being — or having been — a couple with.
+   * Divorced partners belong here: a former relationship is still a declared
+   * relationship, and the union's status says which.
+   */
+  partners: RelatedThroughUnion[];
+  /**
+   * People who share a child with this person and nothing more. A union with
+   * two partners and no status records co-parenthood alone, so these people
+   * must never be presented as partners.
+   */
+  coParents: RelatedThroughUnion[];
   children: Person[];
   siblings: Person[];
 }
@@ -23,17 +41,24 @@ export function relationsOf(data: FamilyTreeData, personId: string): Relations {
     .map(resolve)
     .filter(present);
 
-  const partners = ownUnions.flatMap((union) =>
+  // A single-parent union has nobody on the other side, so it contributes to
+  // neither list — a lone parent gets no phantom partner or co-parent.
+  const othersIn = (union: Union): RelatedThroughUnion[] =>
     union.partnerIds
       .filter((id) => id !== personId)
       .map(resolve)
       .filter(present)
-      .map((person) => ({ person, union })),
-  );
+      .map((person) => ({ person, union }));
+
+  const partners = ownUnions.filter(isDeclaredCouple).flatMap(othersIn);
+
+  const coParents = ownUnions
+    .filter((union) => !isDeclaredCouple(union))
+    .flatMap(othersIn);
 
   const children = ownUnions.flatMap((union) =>
     union.childIds.map(resolve).filter(present),
   );
 
-  return { parents, partners, children, siblings };
+  return { parents, partners, coParents, children, siblings };
 }
