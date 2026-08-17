@@ -1,4 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
+import type { CSSProperties } from "react";
 import type { FamilyTreeData, Person, PositionOverrides, Union } from "./types";
 
 export const NODE_WIDTH = 184;
@@ -211,6 +212,29 @@ function unionPosition(
   };
 }
 
+/**
+ * How the connectors into a union's marker are drawn, so the canvas claims the
+ * same thing the details panel does:
+ * - solid for a declared relationship, current or former-by-marriage;
+ * - dashed for a divorce;
+ * - dotted for two partners with no status, who are known co-parents and
+ *   nothing more — that must not read as a partnership;
+ * - solid for a lone parent, whose single connector depicts parenthood rather
+ *   than any relationship.
+ *
+ * Only partner connectors use this. Parent-child edges are left alone.
+ */
+function partnerEdgeStyle(
+  union: Union,
+  partnerCount: number,
+): CSSProperties | undefined {
+  if (union.status === "divorced") return { strokeDasharray: "5 4" };
+  if (partnerCount >= 2 && union.status === undefined) {
+    return { strokeDasharray: "1 5", strokeLinecap: "round" };
+  }
+  return undefined;
+}
+
 export interface LayoutResult {
   nodes: FamilyFlowNode[];
   edges: Edge[];
@@ -261,7 +285,7 @@ export function layoutTree(
       .filter((id) => positionOf(id) !== undefined)
       .sort((a, b) => positionOf(a)!.x - positionOf(b)!.x);
 
-    const dashed = union.status === "divorced";
+    const partnerStyle = partnerEdgeStyle(union, partners.length);
 
     if (partners.length === 1) {
       edges.push({
@@ -271,7 +295,7 @@ export function layoutTree(
         target: union.id,
         targetHandle: "top",
         type: "smoothstep",
-        style: dashed ? { strokeDasharray: "5 4" } : undefined,
+        style: partnerStyle,
       });
     } else if (partners.length >= 2) {
       const [leftId, rightId] = partners;
@@ -283,7 +307,7 @@ export function layoutTree(
           target: union.id,
           targetHandle: "left",
           type: "straight",
-          style: dashed ? { strokeDasharray: "5 4" } : undefined,
+          style: partnerStyle,
         },
         {
           id: `${union.id}-${rightId}`,
@@ -292,7 +316,7 @@ export function layoutTree(
           target: union.id,
           targetHandle: "right",
           type: "straight",
-          style: dashed ? { strokeDasharray: "5 4" } : undefined,
+          style: partnerStyle,
         },
       );
     }
