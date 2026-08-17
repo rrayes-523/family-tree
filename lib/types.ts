@@ -2,8 +2,11 @@ export type Sex = "male" | "female" | "other";
 
 export type UnionStatus = "married" | "partners" | "divorced";
 
-export interface Person {
-  id: string;
+/**
+ * The editable fields of a person — everything except their identity. Editing
+ * works on a draft so a person's `id` can never be reassigned by a form.
+ */
+export interface PersonDraft {
   firstName: string;
   lastName: string;
   sex: Sex;
@@ -13,10 +16,21 @@ export interface Person {
   notes?: string;
 }
 
+export interface Person extends PersonDraft {
+  id: string;
+}
+
 /**
  * A couple (or a single parent) plus the children that descend from them.
  * Modelling parenthood through a union rather than person-to-person edges keeps
  * siblings grouped and lets the layout hang children off one shared point.
+ *
+ * `status` carries how much is actually known about the couple:
+ * - `"married"` / `"partners"` — a declared relationship;
+ * - `"divorced"` — a declared former relationship;
+ * - absent with two partners — the two are known co-parents and nothing more.
+ *   Sharing a child is never on its own evidence of a partnership;
+ * - absent with one partner — a single known parent, second parent unknown.
  */
 export interface Union {
   id: string;
@@ -25,6 +39,11 @@ export interface Union {
   childIds: string[];
   status?: UnionStatus;
   year?: number;
+}
+
+/** Whether a union records an actual relationship rather than co-parenthood. */
+export function isDeclaredCouple(union: Union): boolean {
+  return union.partnerIds.length >= 2 && union.status !== undefined;
 }
 
 export interface FamilyTreeData {
