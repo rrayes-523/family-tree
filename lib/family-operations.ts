@@ -233,6 +233,7 @@ export function addPartner(
   personId: string,
   partnerId: string,
   status: UnionStatus = "partners",
+  year?: number,
 ): FamilyTreeData {
   if (personId === partnerId) reject("A person cannot be their own partner.");
   requirePerson(data, personId);
@@ -240,7 +241,16 @@ export function addPartner(
 
   const existing = findUnionByPartners(data, [personId, partnerId]);
   if (existing) {
-    return withUnions(data, replaceUnion(data.unions, { ...existing, status }));
+    return withUnions(
+      data,
+      // Promoting co-parents to a declared couple keeps their children and any
+      // year already recorded; a supplied year wins.
+      replaceUnion(data.unions, {
+        ...existing,
+        status,
+        ...(year !== undefined ? { year } : {}),
+      }),
+    );
   }
 
   const union: Union = {
@@ -248,6 +258,7 @@ export function addPartner(
     partnerIds: [personId, partnerId],
     childIds: [],
     status,
+    ...(year !== undefined ? { year } : {}),
   };
 
   return withUnions(data, [...data.unions, union]);

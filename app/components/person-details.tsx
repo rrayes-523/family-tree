@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { relationsOf } from "@/lib/relations";
+import { canAddParent as canAddParentTo } from "@/lib/relationship-actions";
 import {
   fullName,
   lifespan,
@@ -33,7 +34,29 @@ interface PersonDetailsProps {
   person: Person;
   onSelect: (personId: string) => void;
   onEdit: (person: Person) => void;
+  onAddParent: (person: Person) => void;
+  onAddPartner: (person: Person) => void;
+  onAddChild: (person: Person) => void;
   onClose: () => void;
+}
+
+/** The "+ Add …" affordance under each relationship section. */
+function AddRelativeButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="self-start rounded-md px-2 py-1 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
+    >
+      {label}
+    </button>
+  );
 }
 
 function RelationList({
@@ -88,9 +111,14 @@ export default function PersonDetails({
   person,
   onSelect,
   onEdit,
+  onAddParent,
+  onAddPartner,
+  onAddChild,
   onClose,
 }: PersonDetailsProps) {
   const relations = useMemo(() => relationsOf(data, person.id), [data, person.id]);
+  // A person descends from at most one union, so two parents is the ceiling.
+  const canAddParent = useMemo(() => canAddParentTo(data, person.id), [data, person.id]);
 
   const partnerSuffixes = Object.fromEntries(
     relations.partners.map(({ person: partner, union }) => [
@@ -142,17 +170,32 @@ export default function PersonDetails({
         Edit person
       </button>
 
-      <RelationList
-        title="Parents"
-        people={relations.parents}
-        onSelect={onSelect}
-      />
-      <RelationList
-        title={relations.partners.length > 1 ? "Partners" : "Partner"}
-        people={relations.partners.map((p) => p.person)}
-        suffixes={partnerSuffixes}
-        onSelect={onSelect}
-      />
+      <div className="flex flex-col gap-1">
+        <RelationList
+          title="Parents"
+          people={relations.parents}
+          onSelect={onSelect}
+        />
+        {canAddParent && (
+          <AddRelativeButton
+            label="+ Add parent"
+            onClick={() => onAddParent(person)}
+          />
+        )}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <RelationList
+          title={relations.partners.length > 1 ? "Partners" : "Partner"}
+          people={relations.partners.map((p) => p.person)}
+          suffixes={partnerSuffixes}
+          onSelect={onSelect}
+        />
+        <AddRelativeButton
+          label="+ Add partner"
+          onClick={() => onAddPartner(person)}
+        />
+      </div>
       <RelationList
         title={relations.coParents.length > 1 ? "Co-parents" : "Co-parent"}
         hint="Shares a child. No relationship recorded between them."
@@ -164,11 +207,17 @@ export default function PersonDetails({
         people={relations.siblings}
         onSelect={onSelect}
       />
-      <RelationList
-        title="Children"
-        people={relations.children}
-        onSelect={onSelect}
-      />
+      <div className="flex flex-col gap-1">
+        <RelationList
+          title="Children"
+          people={relations.children}
+          onSelect={onSelect}
+        />
+        <AddRelativeButton
+          label="+ Add child"
+          onClick={() => onAddChild(person)}
+        />
+      </div>
 
       {person.notes && (
         <p className="border-t border-zinc-100 pt-3 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">

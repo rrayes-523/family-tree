@@ -40,6 +40,12 @@ import {
   updatePerson,
 } from "@/lib/family-operations";
 import { toFormValues } from "@/lib/person-form";
+import {
+  addChildTo,
+  addParentTo,
+  addPartnerTo,
+  type PersonChoice,
+} from "@/lib/relationship-actions";
 import { loadFamilyState, saveFamilyState } from "@/lib/storage";
 import {
   collapseAllBranches,
@@ -54,6 +60,9 @@ import type {
   PositionOverrides,
 } from "@/lib/types";
 
+import AddChildDialog from "./add-child-dialog";
+import AddParentDialog from "./add-parent-dialog";
+import AddPartnerDialog, { type PartnerDetails } from "./add-partner-dialog";
 import { CollapseContext } from "./collapse-context";
 import Dialog from "./dialog";
 import PersonDetails from "./person-details";
@@ -61,8 +70,16 @@ import PersonForm from "./person-form";
 import PersonNode from "./person-node";
 import UnionNode from "./union-node";
 
-/** Which editor is open, if any. Closed means no pending changes exist. */
-type Editor = { mode: "add" } | { mode: "edit"; person: Person };
+/**
+ * Which editor is open, if any. Closed means no pending changes exist — every
+ * dialog keeps its draft in its own state until the domain accepts it.
+ */
+type Editor =
+  | { mode: "add" }
+  | { mode: "edit"; person: Person }
+  | { mode: "parent"; person: Person }
+  | { mode: "partner"; person: Person }
+  | { mode: "child"; person: Person };
 
 /**
  * Attaches branch-collapse state to the person nodes. Kept out of `layoutTree`
@@ -254,22 +271,90 @@ function FamilyTreeCanvas() {
    * The single path by which family data changes: replace the document,
    * re-project it, and persist it alongside the existing manual positions so a
    * structural edit never wipes someone's layout.
+   *
+   * `reveal` opens only the branches hiding that person, so the result of an
+   * edit is always visible without throwing away the rest of the user's
+   * collapse state.
    */
   const commitFamily = useCallback(
-    (nextFamily: FamilyTreeData, selectId?: string) => {
+    (
+      nextFamily: FamilyTreeData,
+      options: { select?: string; reveal?: string } = {},
+    ) => {
+      const { select, reveal } = options;
+
+      const nextCollapsed = reveal
+        ? revealPathTo(nextFamily, collapsed, reveal)
+        : collapsed;
+      if (nextCollapsed.size !== collapsed.size) setCollapsed(nextCollapsed);
+
       setFamily(nextFamily);
       saveFamilyState({ family: nextFamily, positions });
-      project(nextFamily, collapsed, positions, selectId);
+      project(nextFamily, nextCollapsed, positions, select);
     },
     [collapsed, positions, project],
   );
 
+  /**
+   * Runs a relationship action and commits only if it succeeds. The action
+   * builds a candidate document — including any brand-new person — and a
+   * rejection discards that document whole, so a failed step can never leave a
+   * person behind who was created only to be related.
+   */
+  const runRelationship = useCallback(
+    (action: () => { data: FamilyTreeData; personId: string }, keepSelected: string) => {
+      try {
+        const { data, personId } = action();
+        commitFamily(data, { select: keepSelected, reveal: personId });
+        setEditor(null);
+        setEditorError(undefined);
+      } catch (error) {
+        if (error instanceof FamilyDataError) {
+          setEditorError(error.message);
+          return;
+        }
+        throw error;
+      }
+    },
+    [commitFamily],
+  );
+
+  const openEditor = useCallback((next: Editor) => {
+    setEditorError(undefined);
+    setEditor(next);
+  }, []);
+
   const closeEditor = useCallback(() => {
     // Cancelling touches neither the family nor storage — the draft only ever
-    // existed in the form's own state.
+    // existed in the dialog's own state.
     setEditor(null);
     setEditorError(undefined);
   }, []);
+
+  const submitParent = useCallback(
+    (childId: string, choice: PersonChoice) =>
+      // The child stays selected; the new parent is what must become visible.
+      runRelationship(() => addParentTo(family, childId, choice), childId),
+    [family, runRelationship],
+  );
+
+  const submitPartner = useCallback(
+    (personId: string, choice: PersonChoice, details: PartnerDetails) =>
+      runRelationship(
+        () => addPartnerTo(family, personId, choice, details.status, details.year),
+        personId,
+      ),
+    [family, runRelationship],
+  );
+
+  const submitChild = useCallback(
+    (parentId: string, choice: PersonChoice, otherParentId?: string) =>
+      runRelationship(
+        () => addChildTo(family, parentId, choice, otherParentId),
+        parentId,
+      ),
+    [family, runRelationship],
+  );
 
   const submitEditor = useCallback(
     (draft: PersonDraft) => {
@@ -277,9 +362,11 @@ function FamilyTreeCanvas() {
       try {
         if (editor.mode === "add") {
           const { data, personId } = createPerson(family, draft);
-          commitFamily(data, personId);
-        } else {
-          commitFamily(updatePerson(family, editor.person.id, draft), editor.person.id);
+          commitFamily(data, { select: personId, reveal: personId });
+        } else if (editor.mode === "edit") {
+          commitFamily(updatePerson(family, editor.person.id, draft), {
+            select: editor.person.id,
+          });
         }
         setEditor(null);
         setEditorError(undefined);
@@ -353,10 +440,7 @@ function FamilyTreeCanvas() {
           <span className="h-4 w-px bg-zinc-200 dark:bg-zinc-700" aria-hidden />
           <button
             type="button"
-            onClick={() => {
-              setEditorError(undefined);
-              setEditor({ mode: "add" });
-            }}
+            onClick={() => openEditor({ mode: "add" })}
             className="rounded-md bg-zinc-900 px-2 py-1 font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
           >
             Add person
@@ -390,10 +474,10 @@ function FamilyTreeCanvas() {
               data={family}
               person={selectedPerson}
               onSelect={focusPerson}
-              onEdit={(person) => {
-                setEditorError(undefined);
-                setEditor({ mode: "edit", person });
-              }}
+              onEdit={(person) => openEditor({ mode: "edit", person })}
+              onAddParent={(person) => openEditor({ mode: "parent", person })}
+              onAddPartner={(person) => openEditor({ mode: "partner", person })}
+              onAddChild={(person) => openEditor({ mode: "child", person })}
               onClose={() => setSelectedId(null)}
             />
           </Panel>
@@ -401,7 +485,7 @@ function FamilyTreeCanvas() {
       </ReactFlow>
 
       {/* Outside the flow so the overlay never competes with pane interactions. */}
-      {editor && (
+      {(editor?.mode === "add" || editor?.mode === "edit") && (
         <Dialog
           title={editor.mode === "add" ? "Add person" : "Edit person"}
           onClose={closeEditor}
@@ -416,6 +500,40 @@ function FamilyTreeCanvas() {
             onCancel={closeEditor}
           />
         </Dialog>
+      )}
+
+      {editor?.mode === "parent" && (
+        <AddParentDialog
+          family={family}
+          child={editor.person}
+          formError={editorError}
+          onSubmit={(choice) => submitParent(editor.person.id, choice)}
+          onCancel={closeEditor}
+        />
+      )}
+
+      {editor?.mode === "partner" && (
+        <AddPartnerDialog
+          family={family}
+          person={editor.person}
+          formError={editorError}
+          onSubmit={(choice, details) =>
+            submitPartner(editor.person.id, choice, details)
+          }
+          onCancel={closeEditor}
+        />
+      )}
+
+      {editor?.mode === "child" && (
+        <AddChildDialog
+          family={family}
+          parent={editor.person}
+          formError={editorError}
+          onSubmit={(choice, otherParentId) =>
+            submitChild(editor.person.id, choice, otherParentId)
+          }
+          onCancel={closeEditor}
+        />
       )}
     </CollapseContext.Provider>
   );
