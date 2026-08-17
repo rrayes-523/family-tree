@@ -34,8 +34,7 @@ import {
   repositionUnions,
   type FamilyFlowNode,
 } from "@/lib/layout";
-import { seedData } from "@/lib/seed";
-import { loadPositions, loadTree, savePositions } from "@/lib/storage";
+import { loadFamilyState, saveFamilyState } from "@/lib/storage";
 import type { PositionOverrides } from "@/lib/types";
 
 import PersonDetails from "./person-details";
@@ -57,10 +56,16 @@ const onClient = () => true;
 const onServer = () => false;
 
 function FamilyTreeCanvas() {
-  // Safe to touch localStorage in an initialiser: this component only ever
-  // mounts after hydration (see FamilyTree below).
-  const [data] = useState(() => loadTree() ?? seedData);
-  const [initial] = useState(() => layoutTree(data, loadPositions()));
+  // Safe to touch storage in an initialiser: this component only ever mounts
+  // after hydration (see FamilyTree below). The state returned is always
+  // usable — a fresh seed copy if nothing valid was persisted.
+  const [restored] = useState(loadFamilyState);
+
+  // The family is the authoritative genealogy; nodes and edges below are only
+  // a projection of it. Nothing edits the family yet, so it never changes.
+  const [family] = useState(restored.family);
+  const [positions, setPositions] = useState(restored.positions);
+  const [initial] = useState(() => layoutTree(restored.family, restored.positions));
 
   const [nodes, setNodes] = useState<FamilyFlowNode[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
@@ -86,9 +91,13 @@ function FamilyTreeCanvas() {
       for (const node of draggedNodes) {
         moved[node.id] = { x: node.position.x, y: node.position.y };
       }
-      savePositions({ ...loadPositions(), ...moved });
+      // Family and positions are written together, so persisting a drag can
+      // never overwrite the family document beside it.
+      const next = { ...positions, ...moved };
+      setPositions(next);
+      saveFamilyState({ family, positions: next });
     },
-    [],
+    [family, positions],
   );
 
   const onNodeClick: NodeMouseHandler<FamilyFlowNode> = useCallback(
@@ -121,17 +130,19 @@ function FamilyTreeCanvas() {
   );
 
   const resetLayout = useCallback(() => {
-    savePositions({});
-    const fresh = layoutTree(data, {});
+    // Clears manual placement only — the family document is left untouched.
+    setPositions({});
+    saveFamilyState({ family, positions: {} });
+    const fresh = layoutTree(family, {});
     setNodes(fresh.nodes);
     setEdges(fresh.edges);
     // Let the new positions land before framing them.
     requestAnimationFrame(() => void fitView({ padding: 0.15, duration: 500 }));
-  }, [data, fitView]);
+  }, [family, fitView]);
 
   const selectedPerson = useMemo(
-    () => (selectedId ? data.people.find((p) => p.id === selectedId) : undefined),
-    [data.people, selectedId],
+    () => (selectedId ? family.people.find((p) => p.id === selectedId) : undefined),
+    [family.people, selectedId],
   );
 
   return (
@@ -185,7 +196,7 @@ function FamilyTreeCanvas() {
       {selectedPerson && (
         <Panel position="top-right" className="!m-4">
           <PersonDetails
-            data={data}
+            data={family}
             person={selectedPerson}
             onSelect={focusPerson}
             onClose={() => setSelectedId(null)}
