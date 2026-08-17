@@ -7,8 +7,10 @@ export type UnionStatus = "married" | "partners" | "divorced";
  * works on a draft so a person's `id` can never be reassigned by a form.
  */
 export interface PersonDraft {
+  /** Only one of first/last name is required — see `normaliseDraft`. */
   firstName: string;
   lastName: string;
+  nickname?: string;
   sex: Sex;
   birthYear?: number;
   deathYear?: number;

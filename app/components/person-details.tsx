@@ -32,6 +32,7 @@ interface PersonDetailsProps {
   data: FamilyTreeData;
   person: Person;
   onSelect: (personId: string) => void;
+  onEdit: (person: Person) => void;
   onClose: () => void;
 }
 
@@ -86,6 +87,7 @@ export default function PersonDetails({
   data,
   person,
   onSelect,
+  onEdit,
   onClose,
 }: PersonDetailsProps) {
   const relations = useMemo(() => relationsOf(data, person.id), [data, person.id]);
@@ -106,6 +108,11 @@ export default function PersonDetails({
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">
             {fullName(person)}
           </h2>
+          {person.nickname && (
+            <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
+              “{person.nickname}”
+            </p>
+          )}
           {years && (
             <p className="text-sm tabular-nums text-zinc-500 dark:text-zinc-400">
               {years}
@@ -126,6 +133,14 @@ export default function PersonDetails({
           ✕
         </button>
       </header>
+
+      <button
+        type="button"
+        onClick={() => onEdit(person)}
+        className="rounded-md border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+      >
+        Edit person
+      </button>
 
       <RelationList
         title="Parents"

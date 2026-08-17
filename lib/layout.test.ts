@@ -108,6 +108,60 @@ describe("parent-child edges", () => {
   });
 });
 
+describe("people with no relationships", () => {
+  // A standalone person is legitimate domain data, so they must reach the
+  // canvas rather than being skipped for belonging to no family.
+  const withStandalone = (): FamilyTreeData => {
+    const base = familyWith({ status: "married" });
+    return {
+      people: [
+        ...base.people,
+        { id: "loner", firstName: "Solo", lastName: "Test", sex: "other" },
+      ],
+      unions: base.unions,
+    };
+  };
+
+  it("gives a standalone person a node", () => {
+    const { nodes } = layoutTree(withStandalone());
+
+    expect(nodes.map((n) => n.id)).toContain("loner");
+  });
+
+  it("does not invent a union for them", () => {
+    const { nodes, edges } = layoutTree(withStandalone());
+
+    expect(nodes.filter((n) => n.type === "union")).toHaveLength(1);
+    expect(edges.some((e) => e.source === "loner" || e.target === "loner")).toBe(false);
+  });
+
+  it("does not stack them on top of anyone", () => {
+    const { nodes } = layoutTree(withStandalone());
+    const placed = nodes.map((n) => `${n.position.x},${n.position.y}`);
+
+    expect(new Set(placed).size).toBe(placed.length);
+  });
+
+  it("lays out a family with no unions at all", () => {
+    const { nodes } = layoutTree({
+      people: [
+        { id: "a", firstName: "A", lastName: "Test", sex: "other" },
+        { id: "b", firstName: "B", lastName: "Test", sex: "other" },
+      ],
+      unions: [],
+    });
+
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0].position).not.toEqual(nodes[1].position);
+  });
+
+  it("keeps a manual position for a standalone person", () => {
+    const { nodes } = layoutTree(withStandalone(), { loner: { x: 900, y: 40 } });
+
+    expect(nodes.find((n) => n.id === "loner")?.position).toEqual({ x: 900, y: 40 });
+  });
+});
+
 describe("layout positions", () => {
   it("does not depend on the union's status", () => {
     const positionsFor = (union: Partial<Union>) =>

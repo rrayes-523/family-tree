@@ -143,6 +143,7 @@ function normaliseDraft(draft: PersonDraft): PersonDraft {
 
   // Drop blank optional strings so absent and empty are not two ways of saying
   // "unknown". Nothing here is required — genealogy is mostly missing data.
+  const nickname = draft.nickname?.trim();
   const birthPlace = draft.birthPlace?.trim();
   const notes = draft.notes?.trim();
 
@@ -150,6 +151,7 @@ function normaliseDraft(draft: PersonDraft): PersonDraft {
     firstName,
     lastName,
     sex: draft.sex,
+    ...(nickname ? { nickname } : {}),
     ...(birthYear !== undefined ? { birthYear } : {}),
     ...(deathYear !== undefined ? { deathYear } : {}),
     ...(birthPlace ? { birthPlace } : {}),
