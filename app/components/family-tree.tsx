@@ -41,6 +41,12 @@ import {
 } from "@/lib/family-operations";
 import { toFormValues } from "@/lib/person-form";
 import { loadFamilyState, saveFamilyState } from "@/lib/storage";
+import {
+  collapseAllBranches,
+  collapseInfoFor,
+  revealPathTo,
+  visibleFamily,
+} from "@/lib/visibility";
 import type {
   FamilyTreeData,
   Person,
@@ -48,6 +54,7 @@ import type {
   PositionOverrides,
 } from "@/lib/types";
 
+import { CollapseContext } from "./collapse-context";
 import Dialog from "./dialog";
 import PersonDetails from "./person-details";
 import PersonForm from "./person-form";
@@ -56,6 +63,26 @@ import UnionNode from "./union-node";
 
 /** Which editor is open, if any. Closed means no pending changes exist. */
 type Editor = { mode: "add" } | { mode: "edit"; person: Person };
+
+/**
+ * Attaches branch-collapse state to the person nodes. Kept out of `layoutTree`
+ * so the layout stays a pure function of the family it is handed.
+ */
+function decorateNodes(
+  nodes: FamilyFlowNode[],
+  family: FamilyTreeData,
+  collapsed: ReadonlySet<string>,
+  selectId?: string,
+): FamilyFlowNode[] {
+  return nodes.map((node) => {
+    if (node.type !== "person") return node;
+    return {
+      ...node,
+      selected: selectId === undefined ? node.selected : node.id === selectId,
+      data: { ...node.data, ...collapseInfoFor(family, collapsed, node.id) },
+    };
+  });
+}
 
 const nodeTypes: NodeTypes = { person: PersonNode, union: UnionNode };
 
@@ -81,7 +108,21 @@ function FamilyTreeCanvas() {
   // a projection of it, rebuilt whenever it changes.
   const [family, setFamily] = useState(restored.family);
   const [positions, setPositions] = useState(restored.positions);
-  const [initial] = useState(() => layoutTree(restored.family, restored.positions));
+
+  // Branch collapse is view state: it is deliberately not persisted and never
+  // reaches the family document. Holding ids rather than one flag is what makes
+  // nested collapse survive an ancestor being folded and unfolded.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+
+  const [initial] = useState(() => {
+    const projected = layoutTree(restored.family, restored.positions);
+    return {
+      nodes: decorateNodes(projected.nodes, restored.family, new Set<string>()),
+      edges: projected.edges,
+    };
+  });
 
   const [nodes, setNodes] = useState<FamilyFlowNode[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
@@ -89,7 +130,7 @@ function FamilyTreeCanvas() {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [editorError, setEditorError] = useState<string | undefined>();
 
-  const { getNode, setCenter, fitView } = useReactFlow();
+  const { setCenter, fitView } = useReactFlow();
 
   const onNodesChange = useCallback((changes: NodeChange<FamilyFlowNode>[]) => {
     const moved = changes.some((change) => change.type === "position");
@@ -125,54 +166,40 @@ function FamilyTreeCanvas() {
     [],
   );
 
-  const focusPerson = useCallback(
-    (personId: string) => {
-      setSelectedId(personId);
-      setNodes((current) =>
-        current.map((node) =>
-          node.selected === (node.id === personId)
-            ? node
-            : { ...node, selected: node.id === personId },
-        ),
-      );
-      const node = getNode(personId);
-      if (node) {
-        setCenter(
-          node.position.x + NODE_WIDTH / 2,
-          node.position.y + NODE_HEIGHT / 2,
-          { zoom: 1, duration: 500 },
-        );
-      }
-    },
-    [getNode, setCenter],
-  );
-
   /**
-   * The single path by which family data changes: replace the document,
-   * re-project it to nodes and edges, and persist it alongside the existing
-   * manual positions so a structural edit never wipes someone's layout.
+   * Rebuilds the canvas from the authoritative document plus the current view
+   * state. Everything that changes either one goes through here, so the graph
+   * can never drift from the family it is meant to be showing.
+   *
+   * Hidden people are removed before layout runs, which is why a collapsed
+   * branch leaves no blank space behind — the layout simply never sees them.
    */
-  const commitFamily = useCallback(
-    (nextFamily: FamilyTreeData, selectId?: string) => {
-      const projected = layoutTree(nextFamily, positions);
-      const nextNodes = selectId
-        ? projected.nodes.map((node) =>
-            node.selected === (node.id === selectId)
-              ? node
-              : { ...node, selected: node.id === selectId },
-          )
-        : projected.nodes;
+  const project = useCallback(
+    (
+      nextFamily: FamilyTreeData,
+      nextCollapsed: ReadonlySet<string>,
+      nextPositions: PositionOverrides,
+      selectId?: string,
+    ) => {
+      const projected = layoutTree(
+        visibleFamily(nextFamily, nextCollapsed),
+        nextPositions,
+      );
+      const decorated = decorateNodes(
+        projected.nodes,
+        nextFamily,
+        nextCollapsed,
+        selectId,
+      );
 
-      setFamily(nextFamily);
-      setNodes(nextNodes);
+      setNodes(decorated);
       setEdges(projected.edges);
-      saveFamilyState({ family: nextFamily, positions });
 
       if (selectId) {
         setSelectedId(selectId);
         // Read the position from the projection just built: React Flow's own
         // store has not seen these nodes yet, so getNode would come back empty.
-        const node = projected.nodes.find((candidate) => candidate.id === selectId);
+        const node = decorated.find((candidate) => candidate.id === selectId);
         if (node) {
           setCenter(
             node.position.x + NODE_WIDTH / 2,
@@ -182,7 +209,59 @@ function FamilyTreeCanvas() {
         }
       }
     },
-    [positions, setCenter],
+    [setCenter],
+  );
+
+  /**
+   * Focuses anyone, including someone currently folded away: the branches
+   * hiding them are opened first, so navigation is never told "not found" for
+   * what is only a view-state decision.
+   */
+  const focusPerson = useCallback(
+    (personId: string) => {
+      const revealed = revealPathTo(family, collapsed, personId);
+      if (revealed.size !== collapsed.size) setCollapsed(revealed);
+      project(family, revealed, positions, personId);
+    },
+    [collapsed, family, positions, project],
+  );
+
+  const toggleCollapse = useCallback(
+    (personId: string) => {
+      const next = new Set(collapsed);
+      if (!next.delete(personId)) next.add(personId);
+      setCollapsed(next);
+      project(family, next, positions);
+    },
+    [collapsed, family, positions, project],
+  );
+
+  const collapseAll = useCallback(() => {
+    const next = collapseAllBranches(family);
+    setCollapsed(next);
+    project(family, next, positions);
+    requestAnimationFrame(() => void fitView({ padding: 0.15, duration: 400 }));
+  }, [family, fitView, positions, project]);
+
+  const expandAll = useCallback(() => {
+    const next = new Set<string>();
+    setCollapsed(next);
+    project(family, next, positions);
+    requestAnimationFrame(() => void fitView({ padding: 0.15, duration: 400 }));
+  }, [family, fitView, positions, project]);
+
+  /**
+   * The single path by which family data changes: replace the document,
+   * re-project it, and persist it alongside the existing manual positions so a
+   * structural edit never wipes someone's layout.
+   */
+  const commitFamily = useCallback(
+    (nextFamily: FamilyTreeData, selectId?: string) => {
+      setFamily(nextFamily);
+      saveFamilyState({ family: nextFamily, positions });
+      project(nextFamily, collapsed, positions, selectId);
+    },
+    [collapsed, positions, project],
   );
 
   const closeEditor = useCallback(() => {
@@ -218,15 +297,14 @@ function FamilyTreeCanvas() {
   );
 
   const resetLayout = useCallback(() => {
-    // Clears manual placement only — the family document is left untouched.
+    // Clears manual placement only — the family document and what is currently
+    // folded away are both left untouched.
     setPositions({});
     saveFamilyState({ family, positions: {} });
-    const fresh = layoutTree(family, {});
-    setNodes(fresh.nodes);
-    setEdges(fresh.edges);
+    project(family, collapsed, {});
     // Let the new positions land before framing them.
     requestAnimationFrame(() => void fitView({ padding: 0.15, duration: 500 }));
-  }, [family, fitView]);
+  }, [collapsed, family, fitView, project]);
 
   const selectedPerson = useMemo(
     () => (selectedId ? family.people.find((p) => p.id === selectedId) : undefined),
@@ -234,7 +312,7 @@ function FamilyTreeCanvas() {
   );
 
   return (
-    <>
+    <CollapseContext.Provider value={toggleCollapse}>
       <ReactFlow<FamilyFlowNode>
         nodes={nodes}
         edges={edges}
@@ -285,6 +363,20 @@ function FamilyTreeCanvas() {
           </button>
           <button
             type="button"
+            onClick={collapseAll}
+            className="rounded-md px-2 py-1 font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
+          >
+            Collapse all
+          </button>
+          <button
+            type="button"
+            onClick={expandAll}
+            className="rounded-md px-2 py-1 font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
+          >
+            Expand all
+          </button>
+          <button
+            type="button"
             onClick={resetLayout}
             className="rounded-md px-2 py-1 font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
           >
@@ -325,7 +417,7 @@ function FamilyTreeCanvas() {
           />
         </Dialog>
       )}
-    </>
+    </CollapseContext.Provider>
   );
 }
 

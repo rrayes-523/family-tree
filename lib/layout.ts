@@ -17,6 +17,10 @@ const SINGLE_PARENT_DROP = 30;
 
 export interface PersonNodeData extends Record<string, unknown> {
   person: Person;
+  /** Branch-collapse view state, attached after layout. See lib/visibility.ts. */
+  canCollapse?: boolean;
+  collapsed?: boolean;
+  hiddenCount?: number;
 }
 
 export interface UnionNodeData extends Record<string, unknown> {

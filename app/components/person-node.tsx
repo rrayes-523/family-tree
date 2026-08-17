@@ -8,6 +8,7 @@ import {
   type PersonFlowNode,
 } from "@/lib/layout";
 import { fullName, lifespan, type Sex } from "@/lib/types";
+import { useToggleCollapse } from "./collapse-context";
 
 /** Handles carry the edges; the connection dots themselves stay out of sight. */
 const HIDDEN_HANDLE = {
@@ -27,7 +28,8 @@ const accentBySex: Record<Sex, string> = {
 };
 
 function PersonNode({ data, selected }: NodeProps<PersonFlowNode>) {
-  const { person } = data;
+  const { person, canCollapse, collapsed, hiddenCount = 0 } = data;
+  const toggleCollapse = useToggleCollapse();
   const years = lifespan(person);
   const deceased = person.deathYear !== undefined;
 
@@ -63,6 +65,34 @@ function PersonNode({ data, selected }: NodeProps<PersonFlowNode>) {
           </p>
         )}
       </div>
+
+      {canCollapse && (
+        <button
+          type="button"
+          // nodrag/nopan keep the click from turning into a drag or a pan.
+          className={`nodrag nopan absolute bottom-1 right-1 rounded-full border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-none tabular-nums text-zinc-500 transition-opacity hover:border-zinc-400 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:border-zinc-500 dark:hover:text-zinc-50 ${
+            collapsed ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
+          title={
+            collapsed
+              ? `Show ${hiddenCount} hidden ${hiddenCount === 1 ? "person" : "people"}`
+              : "Hide this branch"
+          }
+          aria-label={
+            collapsed
+              ? `Expand branch of ${fullName(person)}, ${hiddenCount} hidden`
+              : `Collapse branch of ${fullName(person)}`
+          }
+          aria-expanded={!collapsed}
+          onClick={(event) => {
+            // Otherwise the node also registers a selection click.
+            event.stopPropagation();
+            toggleCollapse(person.id);
+          }}
+        >
+          {collapsed ? `+${hiddenCount}` : "−"}
+        </button>
+      )}
     </div>
   );
 }
